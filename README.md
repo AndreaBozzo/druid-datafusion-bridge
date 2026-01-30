@@ -1,6 +1,6 @@
 # druid-datafusion-bridge
 
-![Logo](docs/assets/logo.png){width=800}
+![Logo](docs/assets/logo.png)
 
 > **⚠️ WORK IN PROGRESS**: This library is in active development and is not yet ready for production use. API and functionality are subject to change.
 
