@@ -13,13 +13,15 @@ use crate::error::{DruidSegmentError, Result};
 /// ```text
 /// [version: u8 = 0x01]
 /// [flags: u8]           -- 0x01 = sorted/reverse-lookup, 0x00 = unsorted
-/// [total_bytes: i32]    -- total size of header + offsets + values
+/// [total_bytes: i32]    -- total size of offsets + values (excluding version/flags/total_bytes/num_elements)
 /// [num_elements: i32]
 /// [offsets: i32 * N]    -- cumulative end-offset of each element's data (relative to values_start)
-/// [values: ...]         -- concatenated elements, each prefixed with [length: i32][bytes]
+/// [values: ...]         -- concatenated elements
 /// ```
 ///
-/// For null values, the length prefix is -1 and no bytes follow.
+/// Element format varies by strategy:
+/// - For length-prefixed format: `[length: i32][bytes]` where length=-1 means null
+/// - For null-prefixed strings (ObjectStrategy): `[4 zero bytes][string bytes]`
 #[derive(Debug)]
 pub struct GenericIndexedV1<'a> {
     data: &'a [u8],
@@ -111,8 +113,9 @@ impl<'a> GenericIndexedV1<'a> {
 
     /// Get the i-th element as `Option<&[u8]>`.
     ///
-    /// Returns `None` for null values (length prefix == -1).
-    /// Returns `Some(&[])` for empty values (length prefix == 0).
+    /// This handles the length-prefixed format where:
+    /// - length == -1 means null
+    /// - length >= 0 means that many bytes of data follow
     pub fn get(&self, index: usize) -> Result<Option<&'a [u8]>> {
         let (start, end) = self.element_range(index)?;
         let abs_start = self.values_start + start;
@@ -155,6 +158,69 @@ impl<'a> GenericIndexedV1<'a> {
             }
             Ok(Some(&self.data[value_start..value_end]))
         }
+    }
+    
+    /// Get the i-th element as raw bytes, using the offset table to determine boundaries.
+    ///
+    /// This is useful for formats where elements don't have a length prefix,
+    /// such as ObjectStrategy-serialized strings that have a 4-byte null prefix
+    /// followed by raw string bytes.
+    pub fn get_raw(&self, index: usize) -> Result<&'a [u8]> {
+        let (start, end) = self.element_range(index)?;
+        let abs_start = self.values_start + start;
+        let abs_end = self.values_start + end;
+
+        if abs_end > self.data.len() {
+            return Err(DruidSegmentError::InvalidData(format!(
+                "GenericIndexed: element {} data range [{}, {}) exceeds buffer size {}",
+                index,
+                abs_start,
+                abs_end,
+                self.data.len()
+            )));
+        }
+
+        Ok(&self.data[abs_start..abs_end])
+    }
+    
+    /// Get the i-th element as a string, assuming ObjectStrategy format.
+    ///
+    /// ObjectStrategy format for strings: `[4 zero bytes][string bytes]`
+    /// The string length is determined by the offset table (element_size - 4).
+    pub fn get_object_string(&self, index: usize) -> Result<Option<&'a str>> {
+        let raw = self.get_raw(index)?;
+        
+        if raw.len() < 4 {
+            return Err(DruidSegmentError::InvalidData(format!(
+                "GenericIndexed: element {} too short for ObjectStrategy prefix ({} bytes)",
+                index,
+                raw.len()
+            )));
+        }
+        
+        // First 4 bytes should be zeros (null marker)
+        // If they're not all zero, it might be a different format
+        let prefix = &raw[0..4];
+        if prefix != [0, 0, 0, 0] {
+            return Err(DruidSegmentError::InvalidData(format!(
+                "GenericIndexed: element {} has unexpected ObjectStrategy prefix: {:?}",
+                index, prefix
+            )));
+        }
+        
+        let str_bytes = &raw[4..];
+        if str_bytes.is_empty() {
+            return Ok(None); // Empty string treated as None
+        }
+        
+        let s = std::str::from_utf8(str_bytes).map_err(|e| {
+            DruidSegmentError::InvalidData(format!(
+                "GenericIndexed: element {} is not valid UTF-8: {}",
+                index, e
+            ))
+        })?;
+        
+        Ok(Some(s))
     }
 
     /// Get the i-th element as a UTF-8 string.
