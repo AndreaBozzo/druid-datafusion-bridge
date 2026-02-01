@@ -14,7 +14,7 @@ fn test_smoosh_reader_opens() {
     let reader = SmooshReader::open(path).expect("Failed to open smoosh");
 
     // Should have 22 logical files based on meta.smoosh
-    assert!(reader.len() > 0, "Expected at least some files");
+    assert!(!reader.is_empty(), "Expected at least some files");
 
     // Check for expected files
     assert!(reader.has_file("__time"), "Missing __time column");
