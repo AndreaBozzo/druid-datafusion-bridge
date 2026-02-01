@@ -159,7 +159,7 @@ impl<'a> GenericIndexedV1<'a> {
             Ok(Some(&self.data[value_start..value_end]))
         }
     }
-    
+
     /// Get the i-th element as raw bytes, using the offset table to determine boundaries.
     ///
     /// This is useful for formats where elements don't have a length prefix,
@@ -182,14 +182,14 @@ impl<'a> GenericIndexedV1<'a> {
 
         Ok(&self.data[abs_start..abs_end])
     }
-    
+
     /// Get the i-th element as a string, assuming ObjectStrategy format.
     ///
     /// ObjectStrategy format for strings: `[4 zero bytes][string bytes]`
     /// The string length is determined by the offset table (element_size - 4).
     pub fn get_object_string(&self, index: usize) -> Result<Option<&'a str>> {
         let raw = self.get_raw(index)?;
-        
+
         if raw.len() < 4 {
             return Err(DruidSegmentError::InvalidData(format!(
                 "GenericIndexed: element {} too short for ObjectStrategy prefix ({} bytes)",
@@ -197,7 +197,7 @@ impl<'a> GenericIndexedV1<'a> {
                 raw.len()
             )));
         }
-        
+
         // First 4 bytes should be zeros (null marker)
         // If they're not all zero, it might be a different format
         let prefix = &raw[0..4];
@@ -207,19 +207,19 @@ impl<'a> GenericIndexedV1<'a> {
                 index, prefix
             )));
         }
-        
+
         let str_bytes = &raw[4..];
         if str_bytes.is_empty() {
             return Ok(None); // Empty string treated as None
         }
-        
+
         let s = std::str::from_utf8(str_bytes).map_err(|e| {
             DruidSegmentError::InvalidData(format!(
                 "GenericIndexed: element {} is not valid UTF-8: {}",
                 index, e
             ))
         })?;
-        
+
         Ok(Some(s))
     }
 
